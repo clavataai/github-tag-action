@@ -9,6 +9,7 @@ with_v=${WITH_V:-false}
 release_branches=${RELEASE_BRANCHES:-master,main}
 custom_tag=${CUSTOM_TAG:-}
 source=${SOURCE:-.}
+prefix=${PREFIX:-}
 dryrun=${DRY_RUN:-false}
 git_api_tagging=${GIT_API_TAGGING:-true}
 initial_version=${INITIAL_VERSION:-0.0.0}
@@ -35,6 +36,7 @@ echo -e "\tWITH_V: ${with_v}"
 echo -e "\tRELEASE_BRANCHES: ${release_branches}"
 echo -e "\tCUSTOM_TAG: ${custom_tag}"
 echo -e "\tSOURCE: ${source}"
+echo -e "\tPREFIX: ${prefix}"
 echo -e "\tDRY_RUN: ${dryrun}"
 echo -e "\tGIT_API_TAGGING: ${git_api_tagging}"
 echo -e "\tINITIAL_VERSION: ${initial_version}"
@@ -80,8 +82,12 @@ echo "pre_release = $pre_release"
 # fetch tags
 git fetch --tags
 
-tagFmt="^v?[0-9]+\.[0-9]+\.[0-9]+$"
-preTagFmt="^v?[0-9]+\.[0-9]+\.[0-9]+(-$suffix\.[0-9]+)$"
+# If a prefix was set, we want to integrate it into the tag format, but we need to escape any characters
+# that have meaning in a regex so that they are treated as literals
+escaped_prefix=$(echo "$prefix" | sed 's/[]$*.^[\?]/\\&/g')
+
+tagFmt="^${escaped_prefix}v?[0-9]+\.[0-9]+\.[0-9]+$"
+preTagFmt="^${escaped_prefix}v?[0-9]+\.[0-9]+\.[0-9]+(-$suffix\.[0-9]+)$"
 
 # get the git refs
 git_refs=
@@ -99,8 +105,12 @@ esac
 # get the latest tag that looks like a semver (with or without v)
 matching_tag_refs=$( (grep -E "$tagFmt" <<< "$git_refs") || true)
 matching_pre_tag_refs=$( (grep -E "$preTagFmt" <<< "$git_refs") || true)
-tag=$(head -n 1 <<< "$matching_tag_refs")
-pre_tag=$(head -n 1 <<< "$matching_pre_tag_refs")
+
+# Strip the prefix if one exists so that semver can do its thing
+tag_with_prefix=$(head -n 1 <<< "$matching_tag_refs")
+tag=$(echo "$tag_with_prefix" | tr -d "$prefix")
+pre_tag_with_prefix=$(head -n 1 <<< "$matching_pre_tag_refs")
+pre_tag=$(echo "$pre_tag_with_prefix" | tr -d "$prefix")
 
 # if there are none, start tags at INITIAL_VERSION
 if [ -z "$tag" ]
@@ -123,15 +133,16 @@ then
 fi
 
 # get current commit hash for tag
-tag_commit=$(git rev-list -n 1 "$tag" || true )
+tag_search=$([ -z "$tag_with_prefix" ] && echo "$tag" || echo "$tag_with_prefix")
+tag_commit=$(git rev-list -n 1 "$tag_search" || true )
 # get current commit hash
 commit=$(git rev-parse HEAD)
 # skip if there are no new commits for non-pre_release
 if [ "$tag_commit" == "$commit" ] && [ "$force_without_changes" == "false" ]
 then
     echo "No new commits since previous tag. Skipping..."
-    setOutput "new_tag" "$tag"
-    setOutput "tag" "$tag"
+    setOutput "new_tag" "$tag_search"
+    setOutput "tag" "$tag_search"
     exit 0
 fi
 
@@ -164,22 +175,24 @@ case "$log" in
     *$patch_string_token* ) new=$(semver -i patch "$tag"); part="patch";;
     *$none_string_token* )
         echo "Default bump was set to none. Skipping..."
-        setOutput "old_tag" "$tag"
-        setOutput "new_tag" "$tag"
-        setOutput "tag" "$tag"
+        setOutput "old_tag" "$tag_search"
+        setOutput "new_tag" "$tag_search"
+        setOutput "tag" "$tag_search"
         setOutput "part" "$default_semvar_bump"
         exit 0;;
     * )
         if [ "$default_semvar_bump" == "none" ]
         then
             echo "Default bump was set to none. Skipping..."
-            setOutput "old_tag" "$tag"
-            setOutput "new_tag" "$tag"
-            setOutput "tag" "$tag"
+            setOutput "old_tag" "$tag_search"
+            setOutput "new_tag" "$tag_search"
+            setOutput "tag" "$tag_search"
             setOutput "part" "$default_semvar_bump"
             exit 0
         else
             new=$(semver -i "${default_semvar_bump}" "$tag")
+            # Prepend prefix to the new version number
+            new="${prefix}${new}"
             part=$default_semvar_bump
         fi
         ;;
@@ -187,14 +200,15 @@ esac
 
 if $pre_release
 then
+    pre_tag_search=$([ -z "$pre_tag_with_prefix" ] && echo "$pre_tag" || echo "$pre_tag_with_prefix")
     # get current commit hash for tag
-    pre_tag_commit=$(git rev-list -n 1 "$pre_tag" || true)
+    pre_tag_commit=$(git rev-list -n 1 "$pre_tag_search" || true)
     # skip if there are no new commits for pre_release
     if [ "$pre_tag_commit" == "$commit" ]
     then
         echo "No new commits since previous pre_tag. Skipping..."
-        setOutput "new_tag" "$pre_tag"
-        setOutput "tag" "$pre_tag"
+        setOutput "new_tag" "$pre_tag_search"
+        setOutput "tag" "$pre_tag_search"
         exit 0
     fi
     # already a pre-release available, bump it
@@ -203,16 +217,20 @@ then
         if $with_v
         then
             new=v$(semver -i prerelease "${pre_tag}" --preid "${suffix}")
+            new="${prefix}${new}"
         else
             new=$(semver -i prerelease "${pre_tag}" --preid "${suffix}")
+            new="${prefix}${new}"
         fi
         echo -e "Bumping ${suffix} pre-tag ${pre_tag}. New pre-tag ${new}"
     else
         if $with_v
         then
             new="v$new-$suffix.0"
+            new="${prefix}${new}"
         else
             new="$new-$suffix.0"
+            new="${prefix}${new}"
         fi
         echo -e "Setting ${suffix} pre-tag ${pre_tag} - With pre-tag ${new}"
     fi
@@ -221,6 +239,7 @@ else
     if $with_v
     then
         new="v$new"
+        new="${prefix}${new}"
     fi
     echo -e "Bumping tag ${tag} - New tag ${new}"
 fi
