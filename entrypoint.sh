@@ -181,6 +181,7 @@ case "$log" in
         setOutput "part" "$default_semvar_bump"
         exit 0;;
     * )
+        echo "No #bumps found in commit messages. Using default bump: $default_semvar_bump"
         if [ "$default_semvar_bump" == "none" ]
         then
             echo "Default bump was set to none. Skipping..."
@@ -190,9 +191,8 @@ case "$log" in
             setOutput "part" "$default_semvar_bump"
             exit 0
         else
+            # Bump to the next version based on whether major, minor or patch was requested.
             new=$(semver -i "${default_semvar_bump}" "$tag")
-            # Prepend prefix to the new version number
-            new="${prefix}${new}"
             part=$default_semvar_bump
         fi
         ;;
@@ -226,11 +226,9 @@ then
     else
         if $with_v
         then
-            new="v$new-$suffix.0"
-            new="${prefix}${new}"
+            new="${prefix}v$new-$suffix.0"
         else
-            new="$new-$suffix.0"
-            new="${prefix}${new}"
+            new="${prefix}$new-$suffix.0"
         fi
         echo -e "Setting ${suffix} pre-tag ${pre_tag} - With pre-tag ${new}"
     fi
@@ -238,8 +236,7 @@ then
 else
     if $with_v
     then
-        new="v$new"
-        new="${prefix}${new}"
+        new="${prefix}v$new"
     fi
     echo -e "Bumping tag ${tag} - New tag ${new}"
 fi
